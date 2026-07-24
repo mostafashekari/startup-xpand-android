@@ -35,9 +35,9 @@ concurrency:
 
 jobs:
   build:
-    name: Gradle release build, sign and verify
+    name: Gradle release build, sign, install and verify
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 50
 
     env:
       VERSION_NAME: ${{ github.event.inputs.version_name || '3.2.2' }}
@@ -218,6 +218,44 @@ jobs:
             echo "- Certificate SHA-256: $ACTUAL_CERT"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Enable KVM for Android emulator
+        if: steps.signing.outputs.available == 'true'
+        shell: bash
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install and launch signed APK with adb
+        if: steps.signing.outputs.available == 'true'
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: |
+            set -Eeuo pipefail
+            FINAL="dist/Startup-Xpand-Android-v${VERSION_NAME}-${VERSION_CODE}.apk"
+            test -s "$FINAL"
+            adb devices -l | tee dist/adb-devices.txt
+            adb install -r "$FINAL" | tee dist/adb-install.txt
+            adb shell pm path "$EXPECTED_PACKAGE" | tee dist/adb-package-path.txt
+            adb shell dumpsys package "$EXPECTED_PACKAGE" | grep -E 'versionCode=|versionName=' | head -n 10 | tee dist/adb-package-version.txt
+            adb shell am force-stop "$EXPECTED_PACKAGE"
+            adb shell am start -W -n "$EXPECTED_PACKAGE/.MainActivity" | tee dist/adb-launch.txt
+            sleep 8
+            adb shell pidof "$EXPECTED_PACKAGE" | tee dist/adb-pid.txt
+            test -s dist/adb-pid.txt
+            adb exec-out screencap -p > dist/emulator-screenshot.png
+            adb logcat -d -t 500 > dist/adb-logcat.txt
+            if grep -E 'FATAL EXCEPTION|Process: com\.startupxpand\.app.*has died' dist/adb-logcat.txt; then
+              echo 'Fatal application crash detected.'
+              exit 1
+            fi
+
       - name: Preserve unsigned output when Secret is absent
         if: steps.signing.outputs.available != 'true'
         shell: bash
@@ -230,11 +268,11 @@ jobs:
           cp "$RUNNER_TEMP/gradle-build.log" unsigned-dist/
           sha256sum unsigned-dist/*.apk > unsigned-dist/SHA256SUMS.txt
 
-      - name: Upload verified signed APK
+      - name: Upload verified, installed and launched APK
         if: steps.signing.outputs.available == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: Startup-Xpand-signed-v${{ env.VERSION_NAME }}-${{ env.VERSION_CODE }}
+          name: Startup-Xpand-signed-tested-v${{ env.VERSION_NAME }}-${{ env.VERSION_CODE }}
           path: dist/
           if-no-files-found: error
           retention-days: 30
