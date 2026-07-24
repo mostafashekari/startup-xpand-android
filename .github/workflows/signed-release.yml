@@ -23,6 +23,8 @@ on:
       - 'gradle/**'
       - 'gradlew'
       - 'gradle.properties'
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: read
@@ -67,8 +69,18 @@ jobs:
           test -x "$ANDROID_HOME/build-tools/35.0.0/zipalign"
           test -x "$ANDROID_HOME/build-tools/35.0.0/apksigner"
 
-      - name: Set up Gradle cache
+      - name: Install and cache Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Validate build environment
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          java -version
+          gradle --version
+          sdkmanager --list_installed
 
       - name: Validate and apply version
         shell: bash
@@ -79,14 +91,25 @@ jobs:
           (( VERSION_CODE > 30100 ))
 
           python3 - <<'PY'
-          import os, re
+          import os
+          import re
           from pathlib import Path
 
           path = Path('app/build.gradle.kts')
           text = path.read_text(encoding='utf-8')
-          text, c1 = re.subn(r'versionCode\s*=\s*\d+', f'versionCode = {os.environ["VERSION_CODE"]}', text, count=1)
-          text, c2 = re.subn(r'versionName\s*=\s*"[^"]+"', f'versionName = "{os.environ["VERSION_NAME"]}"', text, count=1)
-          if c1 != 1 or c2 != 1:
+          text, code_changes = re.subn(
+              r'versionCode\s*=\s*\d+',
+              f'versionCode = {os.environ["VERSION_CODE"]}',
+              text,
+              count=1,
+          )
+          text, name_changes = re.subn(
+              r'versionName\s*=\s*"[^"]+"',
+              f'versionName = "{os.environ["VERSION_NAME"]}"',
+              text,
+              count=1,
+          )
+          if code_changes != 1 or name_changes != 1:
               raise SystemExit('Could not update versionCode/versionName')
           path.write_text(text, encoding='utf-8')
           PY
@@ -97,8 +120,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          chmod +x ./gradlew
-          ./gradlew --no-daemon --stacktrace clean assembleRelease | tee "$RUNNER_TEMP/gradle-build.log"
+          gradle --no-daemon --stacktrace clean assembleRelease | tee "$RUNNER_TEMP/gradle-build.log"
 
       - name: Locate and inspect unsigned Release APK
         id: apk
@@ -170,7 +192,9 @@ jobs:
             --out "$FINAL" \
             "$ALIGNED"
 
+          "$BUILD_TOOLS/zipalign" -c -p 4 "$FINAL"
           "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$FINAL" | tee dist/apksigner-verification.txt
+
           BADGING="$("$BUILD_TOOLS/aapt" dump badging "$FINAL" | head -n 1)"
           ACTUAL_PACKAGE="$(sed -n "s/.*package: name='\([^']*\)'.*/\1/p" <<< "$BADGING")"
           ACTUAL_VERSION_CODE="$(sed -n "s/.*versionCode='\([^']*\)'.*/\1/p" <<< "$BADGING")"
