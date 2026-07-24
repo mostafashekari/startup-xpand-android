@@ -12,8 +12,8 @@ android {
         applicationId = "com.startupxpand.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 40000
+        versionName = "4.0.0"
         vectorDrawables { useSupportLibrary = true }
     }
 
