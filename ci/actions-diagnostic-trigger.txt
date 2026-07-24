@@ -1,1 +1,2 @@
 Trigger GitHub Actions Android SDK and Gradle diagnostic build.
+Retry after installing Gradle 8.9 explicitly.
