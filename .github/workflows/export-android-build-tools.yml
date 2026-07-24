@@ -1,0 +1,40 @@
+name: Export Android build tools
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/export-android-build-tools.yml'
+      - '.github/export-tools-trigger.txt'
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: android-actions/setup-android@v3
+      - name: Install official Android build tools
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'build-tools;35.0.0' 'platform-tools'
+          test -x "$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          test -x "$ANDROID_HOME/build-tools/35.0.0/zipalign"
+      - name: Package tools
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p export
+          tar -C "$ANDROID_HOME/build-tools" -czf export/android-build-tools-35.0.0-linux.tar.gz 35.0.0
+          sha256sum export/android-build-tools-35.0.0-linux.tar.gz > export/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-build-tools-35.0.0-linux
+          path: export/
+          if-no-files-found: error
+          retention-days: 1
